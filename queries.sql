@@ -73,6 +73,7 @@ ORDER BY s.cantidad ASC; -- Los más críticos al principio
 --- consultas adicionales para el portafolio (no solicitadas como parte del ejercicio)
 -- ==============================================================================
 -- 7. Ranking de productos más vendidos (best-sellers)
+-- se usa para tener control de los productos más vendidos y preocuparse que nunca nos falte stock
 -- GROUP BY: Agrupa los resultados (ej: junta todas las ventas de un mismo producto para sumarlas).
 SELECT 
     p.nombre AS producto,

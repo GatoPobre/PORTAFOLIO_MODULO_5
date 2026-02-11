@@ -146,27 +146,51 @@ END $$;
 --  Es menos formal que el bloque DO, pero útil para validar pasos específicos de forma rápida.
 --  Tambien  mantiene la atomicidad dentro de su ejecución, así que si algo falla, no se aplicará ningún cambio.
 --===================================================================================
-WITH    
-    -- Creamos un cliente de prueba
+WITH 
+    -- 1. Creamos el cliente
     nuevo_cliente AS (
         INSERT INTO usuarios (nombre, email, hash_password, rol) 
         VALUES ('Cliente Test', 'test_user_' || floor(random()*10000)::text || '@simulation.com', 'hash123', 'cliente') 
         RETURNING id
     ),
-    -- Creamos un pedido para ese cliente
+
+    -- 2. Creamos el pedido (leemos el ID del paso anterior)
     nuevo_pedido AS (
         INSERT INTO pedidos (usuario_id, estado) 
         SELECT id, 'ingresado' FROM nuevo_cliente
-        RETURNING id
+        RETURNING id as id_pedido_generado
     ),
-    -- Agregamos un producto al pedido
+
+    -- 3. Agregamos el detalle (leemos el ID del paso anterior)
     detalle_agregado AS (
         INSERT INTO detalle_pedidos (pedido_id, producto_id, cantidad, precio_unitario)
-        SELECT id, 1, 2, 5000 FROM nuevo_pedido -- Asumiendo producto_id 1 existe
-    )   
-SELECT 'Simulación con WITH QUERIES completada.' AS resultado;
+        SELECT id_pedido_generado, 1, 2, 5 FROM nuevo_pedido -- cambiar la cantidad a 200 para lanzar error
+        -- IMPORTANTE: Retornamos también producto_id y cantidad para usarlos en el siguiente paso
+        RETURNING pedido_id, producto_id, cantidad
+    ),
 
-----===================================================================================
+    -- 4. Actualizamos el Stock del Producto (Depende de detalle_agregado)
+    actualizar_stock AS (
+        UPDATE stock_de_productos
+        SET cantidad = cantidad - (SELECT cantidad FROM detalle_agregado)
+        WHERE producto_id = (SELECT producto_id FROM detalle_agregado)
+		RETURNING 1 as mensaje
+    )
+SELECT * from actualizar_stock;
+-- Si algo falla en cualquiera de los pasos anteriores, no se aplicará ningún cambio a la base de datos,
+-- manteniendo la integridad de los datos.
+-- si todo sale bien, veremos el mensaje de confirmación del último paso (actualización de stock).
+-- pero debemos actualizar el estado del pedido a 'pagado' manualmente para simular el proceso completo,
+-- los CTEs no permiten ejecutar un UPDATE que dependa de su resultado dentro del mismo bloque,
+-- así que lo hacemos después de la consulta.
+BEGIN;
+UPDATE pedidos 
+        SET estado = 'pagado' 
+        WHERE id = (SELECT MAX(id) FROM pedidos);-- actualizamos el pedido recién creado (el de ID más alto)
+COMMIT;
+SELECT * FROM  pedidos ORDER BY id DESC LIMIT 1;
+
+--=====================================================
 --  SIMULACION DE COMPRA COMPLETA (DENTRO DE UNA TRANSACCIÓN MANUAL)
 -- podemos ejecutar cada paso manualmente dentro de una transacción. Esto nos permite verificar resultados intermedios antes de continuar.
 -- CON ESTA IMPLEMENTACION SE SATISFACE EL REQUISITO DE REALIZAR LA SIMULACIÓN PASO A PASO, VERIFICANDO RESULTADOS ANTES DE CONTINUAR AL SIGUIENTE PASO.
@@ -186,7 +210,7 @@ INSERT INTO detalle_pedidos (pedido_id, producto_id, cantidad, precio_unitario)
 -- sino se ha creado el trigger, debemos descontar el stock manualmente aquí para simular su efecto.
 UPDATE pedidos 
     SET estado = 'pagado' 
-    WHERE id = (currval(pg_get_serial_sequence('pedidos', 'id'))); -- actualizamos el pedido recién creado ID 1
+    WHERE id = (currval(pg_get_serial_sequence('pedidos', 'id'))); -- actualizamos el pedido recién creado 
 -- realizamos el descuento manual del stock
 UPDATE stock_de_productos 
     SET cantidad = cantidad - 2 -- descontamos 2 para que pase la compra, usar 100 para que falle
